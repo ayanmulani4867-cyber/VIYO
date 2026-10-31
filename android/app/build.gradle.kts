@@ -61,6 +61,7 @@ dependencies {
   implementation(libs.okhttp)
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
+  ksp(libs.moshi.kotlin.codegen)
 
   // LiveKit Android SDK (WebRTC)
   implementation(libs.livekit.android)

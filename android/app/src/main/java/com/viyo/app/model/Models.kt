@@ -4,18 +4,41 @@ import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 
 @JsonClass(generateAdapter = true)
+data class UserMetadata(
+    val username: String? = null,
+    @Json(name = "display_name") val displayName: String? = null,
+    val email: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class SupabaseAuthUser(
     val id: String,
     val email: String? = null,
-    @Json(name = "user_metadata") val userMetadata: Map<String, String>? = null
+    @Json(name = "user_metadata") val userMetadata: UserMetadata? = null
 )
 
 @JsonClass(generateAdapter = true)
 data class SupabaseAuthResponse(
     @Json(name = "access_token") val accessToken: String? = null,
     @Json(name = "token_type") val tokenType: String? = null,
-    val user: SupabaseAuthUser? = null
-)
+    @Json(name = "refresh_token") val refreshToken: String? = null,
+    val user: SupabaseAuthUser? = null,
+    val id: String? = null,
+    val email: String? = null,
+    @Json(name = "user_metadata") val userMetadata: UserMetadata? = null
+) {
+    fun getEffectiveUser(): SupabaseAuthUser? {
+        if (user != null) return user
+        if (id != null) return SupabaseAuthUser(id = id, email = email, userMetadata = userMetadata)
+        return null
+    }
+
+    fun getEffectiveUsername(fallbackEmail: String): String {
+        return user?.userMetadata?.username
+            ?: userMetadata?.username
+            ?: fallbackEmail.substringBefore("@")
+    }
+}
 
 @JsonClass(generateAdapter = true)
 data class TokenResponse(

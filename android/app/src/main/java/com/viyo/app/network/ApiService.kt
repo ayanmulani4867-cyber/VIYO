@@ -1,5 +1,7 @@
 package com.viyo.app.network
 
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import com.viyo.app.model.*
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -182,11 +184,17 @@ object NetworkClient {
             .build()
     }
 
+    val moshi: Moshi by lazy {
+        Moshi.Builder()
+            .addLast(KotlinJsonAdapterFactory())
+            .build()
+    }
+
     val api: SupabaseApi by lazy {
         Retrofit.Builder()
             .baseUrl(SUPABASE_URL)
             .client(okHttpClient)
-            .addConverterFactory(MoshiConverterFactory.create())
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
             .create(SupabaseApi::class.java)
     }

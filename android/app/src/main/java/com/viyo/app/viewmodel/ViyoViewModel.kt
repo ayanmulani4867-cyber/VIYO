@@ -10,6 +10,8 @@ import com.viyo.app.webrtc.LiveKitManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONObject
+import retrofit2.HttpException
 import java.util.UUID
 
 class ViyoViewModel(application: Application) : AndroidViewModel(application), ViyoRealtimeListener {
@@ -103,11 +105,11 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
                     mapOf("email" to email.trim(), "password" to pass)
                 )
                 val accessToken = res.accessToken
-                val user = res.user
+                val user = res.getEffectiveUser()
                 if (accessToken != null && user != null) {
                     _token.value = accessToken
                     NetworkClient.currentAuthToken = accessToken
-                    val username = user.userMetadata?.get("username") ?: email.substringBefore("@")
+                    val username = res.getEffectiveUsername(email)
                     tokenManager.saveToken(accessToken, user.id, username)
                     realtimeClient.connect(user.id)
                     loadUserProfile(user.id, username)
@@ -116,6 +118,8 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
                 } else {
                     _errorMessage.value = "Login failed: No access token returned"
                 }
+            } catch (e: HttpException) {
+                _errorMessage.value = extractErrorMessage(e)
             } catch (e: Exception) {
                 _errorMessage.value = e.message ?: "Login failed"
             }
@@ -136,22 +140,35 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
                     )
                 )
                 val accessToken = res.accessToken
-                val user = res.user
+                val user = res.getEffectiveUser()
                 if (accessToken != null && user != null) {
                     _token.value = accessToken
                     NetworkClient.currentAuthToken = accessToken
-                    tokenManager.saveToken(accessToken, user.id, username)
+                    val finalUsername = res.getEffectiveUsername(email).ifBlank { username }
+                    tokenManager.saveToken(accessToken, user.id, finalUsername)
                     realtimeClient.connect(user.id)
-                    loadUserProfile(user.id, username)
+                    loadUserProfile(user.id, finalUsername)
                     loadInitialData()
                     onSuccess()
                 } else {
                     // Try auto sign-in if signup succeeded without auto-confirm
                     login(email, pass, onSuccess)
                 }
+            } catch (e: HttpException) {
+                _errorMessage.value = extractErrorMessage(e)
             } catch (e: Exception) {
                 _errorMessage.value = e.message ?: "Registration failed"
             }
+        }
+    }
+
+    private fun extractErrorMessage(e: HttpException): String {
+        return try {
+            val body = e.response()?.errorBody()?.string() ?: ""
+            val json = JSONObject(body)
+            json.optString("msg", json.optString("error_description", json.optString("message", e.message())))
+        } catch (_: Exception) {
+            e.message()
         }
     }
 
