@@ -25,12 +25,18 @@ async def test_health_check():
 
 @pytest.mark.asyncio
 async def test_auth_and_user_flows():
+    tag = uuid.uuid4().hex[:6]
+    u1_name = f"alice_{tag}"
+    u1_email = f"alice_{tag}@viyo.io"
+    u2_name = f"bob_{tag}"
+    u2_email = f"bob_{tag}@viyo.io"
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         # 1. Register User 1 (Admin)
         u1_reg = await ac.post("/api/v1/auth/register", json={
-            "email": "alice@viyo.io",
-            "username": "alice",
+            "email": u1_email,
+            "username": u1_name,
             "password": "Password123!",
             "display_name": "Alice Cooper"
         })
@@ -42,12 +48,12 @@ async def test_auth_and_user_flows():
 
         # 2. Register User 2 (Bob)
         u2_reg = await ac.post("/api/v1/auth/register", json={
-            "email": "bob@viyo.io",
-            "username": "bob",
+            "email": u2_email,
+            "username": u2_name,
             "password": "Password123!",
             "display_name": "Bob Builder"
         })
-        assert u2_reg.status_code == 201
+        assert u2_reg.status_code == 201, u2_reg.text
         token2 = u2_reg.json()["access_token"]
         user2_id = u2_reg.json()["user_id"]
         headers2 = {"Authorization": f"Bearer {token2}"}
@@ -55,7 +61,7 @@ async def test_auth_and_user_flows():
         # 3. Test /auth/me
         me_resp = await ac.get("/api/v1/auth/me", headers=headers1)
         assert me_resp.status_code == 200
-        assert me_resp.json()["username"] == "alice"
+        assert me_resp.json()["username"] == u1_name
         assert me_resp.json()["is_admin"] is True
 
         # 4. Update profile
@@ -67,14 +73,14 @@ async def test_auth_and_user_flows():
         assert prof_resp.json()["bio"] == "Audio/Video enthusiast"
 
         # 5. Search users
-        search_resp = await ac.get("/api/v1/users/search?q=bob", headers=headers1)
+        search_resp = await ac.get(f"/api/v1/users/search?q={u2_name}", headers=headers1)
         assert search_resp.status_code == 200
         assert len(search_resp.json()) >= 1
-        assert search_resp.json()[0]["username"] == "bob"
+        assert search_resp.json()[0]["username"] == u2_name
 
         # 6. Contact request flow: Alice -> Bob
         req_resp = await ac.post("/api/v1/contacts/request", json={
-            "receiver_username": "bob"
+            "receiver_username": u2_name
         }, headers=headers1)
         assert req_resp.status_code == 200
         req_id = req_resp.json()["id"]
@@ -91,7 +97,7 @@ async def test_auth_and_user_flows():
         # Alice verifies Bob in contacts
         contacts_resp = await ac.get("/api/v1/contacts", headers=headers1)
         assert contacts_resp.status_code == 200
-        assert any(c["username"] == "bob" for c in contacts_resp.json())
+        assert any(c["username"] == u2_name for c in contacts_resp.json())
 
         # 7. Create direct conversation & send message
         conv_resp = await ac.post("/api/v1/messaging/conversations", json={

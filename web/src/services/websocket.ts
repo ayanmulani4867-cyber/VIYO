@@ -12,14 +12,23 @@ class WebSocketClient {
       return;
     }
 
-    let url = import.meta.env.VITE_WS_URL;
-    if (url) {
-      url = `${url}${url.includes('?') ? '&' : '?'}token=${token}`;
-    } else {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.port === '5173' ? '127.0.0.1:8000' : window.location.host;
-      url = `${protocol}//${host}/api/v1/ws?token=${token}`;
+    let rawUrl = (import.meta.env.VITE_WS_URL || '').trim();
+    if (!rawUrl) {
+      if (typeof window !== 'undefined' && window.location.hostname.includes('onrender.com')) {
+        rawUrl = 'wss://viyo-backend.onrender.com/api/v1/ws';
+      } else {
+        const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = typeof window !== 'undefined' && window.location.port === '5173' ? '127.0.0.1:8000' : (typeof window !== 'undefined' ? window.location.host : '127.0.0.1:8000');
+        rawUrl = `${protocol}//${host}/api/v1/ws`;
+      }
     }
+
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:' && rawUrl.startsWith('ws://') && !rawUrl.includes('localhost') && !rawUrl.includes('127.0.0.1')) {
+      rawUrl = rawUrl.replace('ws://', 'wss://');
+    }
+
+    const separator = rawUrl.includes('?') ? '&' : '?';
+    const url = `${rawUrl}${separator}token=${token}`;
 
     try {
       this.ws = new WebSocket(url);

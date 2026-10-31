@@ -22,13 +22,20 @@ from app.modules.meetings.routes import router as meetings_router
 from app.modules.notifications.routes import router as notifications_router
 from app.modules.moderation.routes import router as moderation_router
 
+from sqlalchemy import text
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure upload directory exists
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     # Ensure database schema is ready
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("Database schema successfully initialized.")
+    except Exception as e:
+        print(f"DATABASE INITIALIZATION NOTICE: {e}")
+        print("Server continuing startup to ensure health and routing availability...")
     yield
     await engine.dispose()
 
@@ -39,13 +46,24 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Middleware
+# CORS Middleware - Explicit production origins + dynamic regex for Render
+origins = [
+    "https://viyo-web.onrender.com",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+    "http://localhost",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
+    allow_origin_regex=r"https://.*\.onrender\.com",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Serve uploaded media files
@@ -56,11 +74,20 @@ app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads"
 @app.get("/health")
 @app.get("/api/v1/health")
 async def health_check():
+    db_status = "connected"
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"unreachable ({type(e).__name__})"
+
     return {
         "status": "healthy",
         "app": settings.PROJECT_NAME,
         "tagline": settings.TAGLINE,
         "version": settings.VERSION,
+        "database": db_status,
+        "database_type": "postgresql" if "postgresql" in str(engine.url) else "sqlite",
         "livekit_url": settings.LIVEKIT_URL
     }
 

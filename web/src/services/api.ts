@@ -1,4 +1,35 @@
-const API_BASE = import.meta.env.VITE_API_URL || '/api/v1';
+function getApiBase(): string {
+  let url = (import.meta.env.VITE_API_URL || '').trim();
+
+  if (!url) {
+    if (typeof window !== 'undefined' && window.location.hostname.includes('onrender.com')) {
+      url = 'https://viyo-backend.onrender.com/api/v1';
+    } else {
+      url = '/api/v1';
+    }
+  }
+
+  // Ensure https in production
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && url.startsWith('http://') && !url.includes('localhost') && !url.includes('127.0.0.1')) {
+    url = url.replace('http://', 'https://');
+  }
+
+  // Strip trailing slashes
+  url = url.replace(/\/+$/, '');
+
+  // Ensure /api/v1 suffix
+  if (!url.endsWith('/api/v1')) {
+    if (url.endsWith('/api')) {
+      url = `${url}/v1`;
+    } else if (!url.includes('/api/v1')) {
+      url = `${url}/api/v1`;
+    }
+  }
+
+  return url;
+}
+
+const API_BASE = getApiBase();
 
 class ApiService {
   private getToken(): string | null {
@@ -19,23 +50,30 @@ class ApiService {
       headers['Content-Type'] = 'application/json';
     }
 
-    const res = await fetch(`${API_BASE}${endpoint}`, {
-      ...options,
-      headers,
-    });
+    try {
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers,
+      });
 
-    if (!res.ok) {
-      let errorMsg = 'An error occurred';
-      try {
-        const errorData = await res.json();
-        errorMsg = errorData.detail || errorData.message || JSON.stringify(errorData);
-      } catch {
-        errorMsg = res.statusText || `Request failed with status ${res.status}`;
+      if (!res.ok) {
+        let errorMsg = 'An error occurred';
+        try {
+          const errorData = await res.json();
+          errorMsg = errorData.detail || errorData.message || JSON.stringify(errorData);
+        } catch {
+          errorMsg = res.statusText || `Request failed with status ${res.status}`;
+        }
+        throw new Error(errorMsg);
       }
-      throw new Error(errorMsg);
-    }
 
-    return res.json();
+      return res.json();
+    } catch (err: any) {
+      if (err.name === 'TypeError' && err.message?.toLowerCase().includes('failed to fetch')) {
+        throw new Error(`Cannot reach VIYO backend server at ${API_BASE}. The backend may be starting up on Render or the service is temporarily sleeping.`);
+      }
+      throw err;
+    }
   }
 
   // Auth

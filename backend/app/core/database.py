@@ -10,6 +10,11 @@ from app.core.config import settings
 db_url = settings.DATABASE_URL
 connect_args = {}
 
+# Detect template placeholder to prevent server startup crash
+if "<" in db_url or "YOUR_" in db_url or "PROJECT_REF" in db_url:
+    print("WARNING: DATABASE_URL contains template placeholder. Defaulting to SQLite to prevent server crash.")
+    db_url = "sqlite+aiosqlite:///./viyo.db"
+
 # Normalize standard postgres:// or postgresql:// to postgresql+asyncpg://
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
