@@ -4,6 +4,20 @@ import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 
 @JsonClass(generateAdapter = true)
+data class SupabaseAuthUser(
+    val id: String,
+    val email: String? = null,
+    @Json(name = "user_metadata") val userMetadata: Map<String, String>? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SupabaseAuthResponse(
+    @Json(name = "access_token") val accessToken: String? = null,
+    @Json(name = "token_type") val tokenType: String? = null,
+    val user: SupabaseAuthUser? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class TokenResponse(
     @Json(name = "access_token") val accessToken: String,
     @Json(name = "token_type") val tokenType: String = "bearer",
@@ -13,6 +27,8 @@ data class TokenResponse(
 
 @JsonClass(generateAdapter = true)
 data class UserProfile(
+    val id: String? = null,
+    val username: String? = null,
     @Json(name = "display_name") val displayName: String,
     @Json(name = "avatar_url") val avatarUrl: String? = null,
     val bio: String? = null,
@@ -53,6 +69,15 @@ data class Contact(
 )
 
 @JsonClass(generateAdapter = true)
+data class ContactRow(
+    val id: String,
+    @Json(name = "user_id") val userId: String,
+    @Json(name = "contact_user_id") val contactUserId: String,
+    val nickname: String? = null,
+    @Json(name = "created_at") val createdAt: String
+)
+
+@JsonClass(generateAdapter = true)
 data class ContactRequestItem(
     val id: String,
     @Json(name = "sender_id") val senderId: String,
@@ -83,6 +108,14 @@ data class Conversation(
     val title: String? = null,
     @Json(name = "avatar_url") val avatarUrl: String? = null,
     @Json(name = "last_message") val lastMessage: Message? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class ConversationMemberRow(
+    val id: String,
+    @Json(name = "conversation_id") val conversationId: String,
+    @Json(name = "user_id") val userId: String,
+    val role: String = "member"
 )
 
 @JsonClass(generateAdapter = true)
@@ -122,4 +155,12 @@ data class Meeting(
     @Json(name = "host_id") val hostId: String,
     @Json(name = "livekit_token") val livekitToken: String? = null,
     @Json(name = "livekit_url") val livekitUrl: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class LiveKitTokenResponse(
+    val token: String? = null,
+    @Json(name = "livekit_url") val livekitUrl: String? = null,
+    @Json(name = "room_name") val roomName: String? = null,
+    val error: String? = null
 )

@@ -1,6 +1,7 @@
 package com.viyo.app.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.viyo.app.model.*
@@ -9,11 +10,12 @@ import com.viyo.app.webrtc.LiveKitManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.UUID
 
-class ViyoViewModel(application: Application) : AndroidViewModel(application), ViyoWebSocketListener {
+class ViyoViewModel(application: Application) : AndroidViewModel(application), ViyoRealtimeListener {
     val liveKitManager = LiveKitManager(application)
     private val tokenManager = TokenManager(application)
-    private val webSocketClient = ViyoWebSocketClient(this)
+    private val realtimeClient = ViyoRealtimeClient(this)
 
     private val _token = MutableStateFlow<String?>(null)
     val token = _token.asStateFlow()
@@ -61,48 +63,59 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     val errorMessage = _errorMessage.asStateFlow()
 
     init {
-        // Initialize custom server url if saved
-        val customUrl = tokenManager.getCustomBaseUrl()
-        NetworkClient.initialize(customUrl)
-
-        // Restore persisted session
+        // Restore session from TokenManager
         val savedToken = tokenManager.getToken()
-        if (!savedToken.isNullOrBlank()) {
+        val savedUserId = tokenManager.getUserId()
+        val savedUsername = tokenManager.getUsername()
+
+        if (!savedToken.isNullOrBlank() && !savedUserId.isNullOrBlank()) {
             _token.value = savedToken
-            webSocketClient.connect(savedToken)
-            loadCurrentUser(savedToken)
+            NetworkClient.currentAuthToken = savedToken
+            realtimeClient.connect(savedUserId)
+            loadUserProfile(savedUserId, savedUsername ?: "")
+            loadInitialData()
         }
     }
 
-    private fun loadCurrentUser(t: String) {
+    private fun loadUserProfile(userId: String, fallbackUsername: String) {
         viewModelScope.launch {
             try {
-                val user = NetworkClient.api.getMe("Bearer $t")
-                _currentUser.value = user
-                loadInitialData()
+                val profiles = NetworkClient.api.getProfile("eq.$userId")
+                val p = profiles.firstOrNull()
+                _currentUser.value = User(
+                    id = userId,
+                    email = "",
+                    username = p?.username ?: fallbackUsername,
+                    isActive = true,
+                    isAdmin = false,
+                    profile = p ?: UserProfile(displayName = fallbackUsername)
+                )
             } catch (e: Exception) {
-                // If token expired or unauthorized, logout
-                if (e.message?.contains("401") == true || e.message?.contains("Unauthorized") == true) {
-                    logout()
-                }
+                Log.w("ViyoVM", "Error loading profile: ${e.message}")
             }
         }
     }
 
-    fun login(usernameOrEmail: String, pass: String, onSuccess: () -> Unit) {
+    fun login(email: String, pass: String, onSuccess: () -> Unit) {
         viewModelScope.launch {
             try {
-                val res = NetworkClient.api.login(
-                    mapOf("username_or_email" to usernameOrEmail, "password" to pass)
+                val res = NetworkClient.api.signIn(
+                    mapOf("email" to email.trim(), "password" to pass)
                 )
-                _token.value = res.accessToken
-                tokenManager.saveToken(res.accessToken, res.userId, res.username)
-                webSocketClient.connect(res.accessToken)
-
-                val user = NetworkClient.api.getMe("Bearer ${res.accessToken}")
-                _currentUser.value = user
-                loadInitialData()
-                onSuccess()
+                val accessToken = res.accessToken
+                val user = res.user
+                if (accessToken != null && user != null) {
+                    _token.value = accessToken
+                    NetworkClient.currentAuthToken = accessToken
+                    val username = user.userMetadata?.get("username") ?: email.substringBefore("@")
+                    tokenManager.saveToken(accessToken, user.id, username)
+                    realtimeClient.connect(user.id)
+                    loadUserProfile(user.id, username)
+                    loadInitialData()
+                    onSuccess()
+                } else {
+                    _errorMessage.value = "Login failed: No access token returned"
+                }
             } catch (e: Exception) {
                 _errorMessage.value = e.message ?: "Login failed"
             }
@@ -112,22 +125,30 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     fun register(email: String, username: String, pass: String, name: String, onSuccess: () -> Unit) {
         viewModelScope.launch {
             try {
-                val res = NetworkClient.api.register(
+                val res = NetworkClient.api.signUp(
                     mapOf(
-                        "email" to email,
-                        "username" to username,
+                        "email" to email.trim(),
                         "password" to pass,
-                        "display_name" to name
+                        "data" to mapOf(
+                            "username" to username.trim().lowercase(),
+                            "display_name" to name.trim()
+                        )
                     )
                 )
-                _token.value = res.accessToken
-                tokenManager.saveToken(res.accessToken, res.userId, res.username)
-                webSocketClient.connect(res.accessToken)
-
-                val user = NetworkClient.api.getMe("Bearer ${res.accessToken}")
-                _currentUser.value = user
-                loadInitialData()
-                onSuccess()
+                val accessToken = res.accessToken
+                val user = res.user
+                if (accessToken != null && user != null) {
+                    _token.value = accessToken
+                    NetworkClient.currentAuthToken = accessToken
+                    tokenManager.saveToken(accessToken, user.id, username)
+                    realtimeClient.connect(user.id)
+                    loadUserProfile(user.id, username)
+                    loadInitialData()
+                    onSuccess()
+                } else {
+                    // Try auto sign-in if signup succeeded without auto-confirm
+                    login(email, pass, onSuccess)
+                }
             } catch (e: Exception) {
                 _errorMessage.value = e.message ?: "Registration failed"
             }
@@ -135,45 +156,80 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun loadInitialData() {
-        val t = _token.value ?: return
-        viewModelScope.launch {
-            try {
-                loadContacts()
-                loadPendingRequests()
-                val convs = NetworkClient.api.getConversations("Bearer $t")
-                _conversations.value = convs
-            } catch (e: Exception) {
-                // Ignore initial load error
-            }
-        }
+        loadContacts()
+        loadPendingRequests()
+        loadConversations()
     }
 
     fun loadContacts() {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         viewModelScope.launch {
             try {
-                val c = NetworkClient.api.getContacts("Bearer $t")
-                _contacts.value = c
+                val rows = NetworkClient.api.getContacts("eq.$myId")
+                if (rows.isEmpty()) {
+                    _contacts.value = emptyList()
+                    return@launch
+                }
+
+                val contactUserIds = rows.map { it.contactUserId }
+                // Fetch profiles for all contacts
+                val orFilter = "id.in.(${contactUserIds.joinToString(",")})"
+                val profiles = NetworkClient.api.searchProfiles(orFilter)
+                val profileMap = profiles.associateBy { it.id }
+
+                val contactList = rows.mapNotNull { row ->
+                    val p = profileMap[row.contactUserId]
+                    if (p != null) {
+                        Contact(
+                            id = row.id,
+                            contactUserId = row.contactUserId,
+                            username = p.username,
+                            displayName = p.displayName,
+                            avatarUrl = p.avatarUrl,
+                            isOnline = p.isOnline,
+                            lastSeen = p.lastSeen
+                        )
+                    } else null
+                }
+                _contacts.value = contactList
             } catch (e: Exception) {
-                // Ignore
+                Log.w("ViyoVM", "Error loading contacts: ${e.message}")
             }
         }
     }
 
     fun loadPendingRequests() {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         viewModelScope.launch {
             try {
-                val reqs = NetworkClient.api.getPendingRequests("Bearer $t")
-                _pendingRequests.value = reqs
+                val reqs = NetworkClient.api.getPendingRequests("eq.$myId")
+                if (reqs.isEmpty()) {
+                    _pendingRequests.value = emptyList()
+                    return@launch
+                }
+
+                val senderIds = reqs.map { it.senderId }
+                val orFilter = "id.in.(${senderIds.joinToString(",")})"
+                val senderProfiles = NetworkClient.api.searchProfiles(orFilter)
+                val profileMap = senderProfiles.associateBy { it.id }
+
+                val enriched = reqs.map { req ->
+                    val p = profileMap[req.senderId]
+                    req.copy(
+                        senderUsername = p?.username,
+                        senderDisplayName = p?.displayName,
+                        senderAvatarUrl = p?.avatarUrl
+                    )
+                }
+                _pendingRequests.value = enriched
             } catch (e: Exception) {
-                // Ignore
+                Log.w("ViyoVM", "Error loading pending requests: ${e.message}")
             }
         }
     }
 
     fun searchUsers(query: String) {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         if (query.isBlank()) {
             _searchResults.value = emptyList()
             _isSearching.value = false
@@ -183,7 +239,12 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
         viewModelScope.launch {
             _isSearching.value = true
             try {
-                val results = NetworkClient.api.searchUsers("Bearer $t", query.trim())
+                val q = query.trim()
+                val orFilter = "(username.ilike.*$q*,display_name.ilike.*$q*)"
+                val results = NetworkClient.api.searchProfiles(
+                    orFilter = orFilter,
+                    notMeFilter = "neq.$myId"
+                )
                 _searchResults.value = results
             } catch (e: Exception) {
                 _errorMessage.value = "Search error: ${e.message}"
@@ -194,12 +255,23 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun sendContactRequest(targetUsername: String, onDone: () -> Unit) {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         viewModelScope.launch {
             try {
+                // Find target user by username
+                val target = NetworkClient.api.searchProfiles(orFilter = "username.eq.${targetUsername.trim().lowercase()}")
+                val receiver = target.firstOrNull()
+                if (receiver == null) {
+                    _errorMessage.value = "User not found"
+                    return@launch
+                }
+
                 NetworkClient.api.sendContactRequest(
-                    "Bearer $t",
-                    mapOf("receiver_username" to targetUsername)
+                    mapOf(
+                        "sender_id" to myId,
+                        "receiver_id" to receiver.id,
+                        "status" to "pending"
+                    )
                 )
                 onDone()
             } catch (e: Exception) {
@@ -209,10 +281,18 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun acceptContactRequest(requestId: String) {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
+        val req = _pendingRequests.value.firstOrNull { it.id == requestId } ?: return
         viewModelScope.launch {
             try {
-                NetworkClient.api.acceptContactRequest("Bearer $t", requestId)
+                NetworkClient.api.updateContactRequest("eq.$requestId", mapOf("status" to "accepted"))
+                // Add mutual contacts
+                NetworkClient.api.addContact(
+                    listOf(
+                        mapOf("user_id" to myId, "contact_user_id" to req.senderId),
+                        mapOf("user_id" to req.senderId, "contact_user_id" to myId)
+                    )
+                )
                 loadPendingRequests()
                 loadContacts()
             } catch (e: Exception) {
@@ -222,10 +302,9 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun rejectContactRequest(requestId: String) {
-        val t = _token.value ?: return
         viewModelScope.launch {
             try {
-                NetworkClient.api.rejectContactRequest("Bearer $t", requestId)
+                NetworkClient.api.updateContactRequest("eq.$requestId", mapOf("status" to "rejected"))
                 loadPendingRequests()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to reject request: ${e.message}"
@@ -233,22 +312,58 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
         }
     }
 
-    // Messaging
+    private fun loadConversations() {
+        val myId = tokenManager.getUserId() ?: return
+        viewModelScope.launch {
+            try {
+                val memberRows = NetworkClient.api.getConversationMembers("eq.$myId")
+                if (memberRows.isEmpty()) {
+                    _conversations.value = emptyList()
+                    return@launch
+                }
+                val convIds = memberRows.map { it.conversationId }
+                val convs = NetworkClient.api.getConversations()
+                _conversations.value = convs.filter { it.id in convIds }
+            } catch (e: Exception) {
+                Log.w("ViyoVM", "Error loading conversations: ${e.message}")
+            }
+        }
+    }
+
     fun openChat(contact: Contact, onOpenChatScreen: () -> Unit) {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         _activeChatContact.value = contact
         viewModelScope.launch {
             try {
-                // Find or create direct conversation
-                val conv = NetworkClient.api.createConversation(
-                    "Bearer $t",
-                    mapOf(
-                        "type" to "direct",
-                        "participant_user_ids" to listOf(contact.contactUserId)
+                // Find direct conversation with this contact
+                val myMemberRows = NetworkClient.api.getConversationMembers("eq.$myId")
+                val peerMemberRows = NetworkClient.api.getConversationMembers("eq.${contact.contactUserId}")
+
+                val commonConvIds = myMemberRows.map { it.conversationId }.intersect(peerMemberRows.map { it.conversationId }.toSet())
+                var targetConv: Conversation? = null
+
+                if (commonConvIds.isNotEmpty()) {
+                    val allConvs = NetworkClient.api.getConversations()
+                    targetConv = allConvs.firstOrNull { it.id in commonConvIds && it.type == "direct" }
+                }
+
+                if (targetConv == null) {
+                    // Create new direct conversation
+                    val created = NetworkClient.api.createConversation(
+                        mapOf("type" to "direct", "created_by" to myId)
                     )
-                )
-                _activeConversation.value = conv
-                loadMessages(conv.id)
+                    targetConv = created.first()
+                    // Add members
+                    NetworkClient.api.addConversationMembers(
+                        listOf(
+                            mapOf("conversation_id" to targetConv.id, "user_id" to myId, "role" to "owner"),
+                            mapOf("conversation_id" to targetConv.id, "user_id" to contact.contactUserId, "role" to "member")
+                        )
+                    )
+                }
+
+                _activeConversation.value = targetConv
+                loadMessages(targetConv.id)
                 onOpenChatScreen()
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to open conversation: ${e.message}"
@@ -257,10 +372,9 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun loadMessages(conversationId: String) {
-        val t = _token.value ?: return
         viewModelScope.launch {
             try {
-                val msgs = NetworkClient.api.getMessages("Bearer $t", conversationId)
+                val msgs = NetworkClient.api.getMessages("eq.$conversationId")
                 _messages.value = msgs
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to load messages: ${e.message}"
@@ -269,20 +383,23 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun sendMessage(content: String) {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         val conv = _activeConversation.value ?: return
         if (content.isBlank()) return
 
         viewModelScope.launch {
             try {
-                val sent = NetworkClient.api.sendMessage(
-                    "Bearer $t",
-                    conv.id,
-                    mapOf("content" to content, "message_type" to "text")
+                val created = NetworkClient.api.sendMessage(
+                    mapOf(
+                        "conversation_id" to conv.id,
+                        "sender_id" to myId,
+                        "content" to content.trim(),
+                        "message_type" to "text"
+                    )
                 )
-                // Add to messages if not already delivered via WS
-                if (_messages.value.none { it.id == sent.id }) {
-                    _messages.value = _messages.value + sent
+                val msg = created.firstOrNull()
+                if (msg != null && _messages.value.none { it.id == msg.id }) {
+                    _messages.value = _messages.value + msg
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to send message: ${e.message}"
@@ -291,51 +408,66 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun sendTyping(isTyping: Boolean) {
-        val conv = _activeConversation.value ?: return
-        val peerId = _activeChatContact.value?.contactUserId ?: return
-        webSocketClient.sendTyping(conv.id, listOf(peerId), isTyping)
+        // Handled via Realtime broadcast
     }
 
-    // Calling
     fun startCall(receiverId: String, callType: String = "video") {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         viewModelScope.launch {
             try {
-                val call = NetworkClient.api.initiateCall(
-                    "Bearer $t",
-                    mapOf("receiver_id" to receiverId, "call_type" to callType)
-                )
-                _activeCall.value = call
-                if (call.livekitToken != null && call.livekitUrl != null) {
-                    liveKitManager.connect(
-                        url = call.livekitUrl,
-                        token = call.livekitToken,
-                        video = callType == "video"
+                val roomName = "viyo_call_${UUID.randomUUID().toString().replace("-", "").take(12)}"
+                val created = NetworkClient.api.createCallRecord(
+                    mapOf(
+                        "caller_id" to myId,
+                        "receiver_id" to receiverId,
+                        "room_name" to roomName,
+                        "call_type" to callType,
+                        "status" to "ringing"
                     )
+                )
+                val call = created.first()
+                _activeCall.value = call
+
+                // Request LiveKit Token from Supabase Edge Function
+                val tokenRes = NetworkClient.api.generateLiveKitToken(
+                    mapOf(
+                        "room_name" to roomName,
+                        "participant_identity" to myId,
+                        "participant_name" to (_currentUser.value?.username ?: myId)
+                    )
+                )
+
+                val token = tokenRes.token
+                val url = tokenRes.livekitUrl ?: NetworkClient.LIVEKIT_URL
+                if (token != null) {
+                    liveKitManager.connect(url = url, token = token, video = callType == "video")
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "Failed to start call: ${e.message}"
+                _errorMessage.value = "Call initiation notice: ${e.message}"
             }
         }
     }
 
     fun acceptIncomingCall(incoming: IncomingCallData, onConnected: () -> Unit) {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         viewModelScope.launch {
             try {
-                val updatedCall = NetworkClient.api.callAction(
-                    "Bearer $t",
-                    incoming.callId,
-                    mapOf("action" to "accept")
-                )
+                NetworkClient.api.updateCallRecord("eq.${incoming.callId}", mapOf("status" to "accepted"))
                 _incomingCall.value = null
-                _activeCall.value = updatedCall
-                if (updatedCall.livekitToken != null && updatedCall.livekitUrl != null) {
-                    liveKitManager.connect(
-                        url = updatedCall.livekitUrl,
-                        token = updatedCall.livekitToken,
-                        video = incoming.callType == "video"
+
+                // Request LiveKit Token from Supabase Edge Function
+                val tokenRes = NetworkClient.api.generateLiveKitToken(
+                    mapOf(
+                        "room_name" to incoming.roomName,
+                        "participant_identity" to myId,
+                        "participant_name" to (_currentUser.value?.username ?: myId)
                     )
+                )
+
+                val token = tokenRes.token
+                val url = tokenRes.livekitUrl ?: NetworkClient.LIVEKIT_URL
+                if (token != null) {
+                    liveKitManager.connect(url = url, token = token, video = incoming.callType == "video")
                 }
                 onConnected()
             } catch (e: Exception) {
@@ -346,14 +478,9 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun rejectIncomingCall(incoming: IncomingCallData) {
-        val t = _token.value ?: return
         viewModelScope.launch {
             try {
-                NetworkClient.api.callAction(
-                    "Bearer $t",
-                    incoming.callId,
-                    mapOf("action" to "reject")
-                )
+                NetworkClient.api.updateCallRecord("eq.${incoming.callId}", mapOf("status" to "rejected"))
             } catch (e: Exception) {
                 // Ignore
             } finally {
@@ -363,36 +490,46 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun endCall() {
-        val t = _token.value ?: return
-        val call = _activeCall.value ?: return
-        viewModelScope.launch {
-            try {
-                NetworkClient.api.callAction(
-                    "Bearer $t",
-                    call.id,
-                    mapOf("action" to "end")
-                )
-            } catch (e: Exception) {
-                // Ignore
-            } finally {
-                liveKitManager.disconnect()
-                _activeCall.value = null
+        val call = _activeCall.value
+        if (call != null) {
+            viewModelScope.launch {
+                try {
+                    NetworkClient.api.updateCallRecord("eq.${call.id}", mapOf("status" to "ended"))
+                } catch (e: Exception) {
+                    // Ignore
+                } finally {
+                    liveKitManager.disconnect()
+                    _activeCall.value = null
+                }
             }
+        } else {
+            liveKitManager.disconnect()
         }
     }
 
-    // Meetings
     fun createMeeting(title: String, onSuccess: () -> Unit) {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         viewModelScope.launch {
             try {
-                val mtg = NetworkClient.api.createMeeting(
-                    "Bearer $t",
-                    mapOf("title" to title, "waiting_room_enabled" to false)
+                val code = UUID.randomUUID().toString().take(8).uppercase()
+                val room = "viyo_mtg_$code"
+                val created = NetworkClient.api.createMeeting(
+                    mapOf("meeting_code" to code, "host_id" to myId, "title" to title, "room_name" to room)
                 )
+                val mtg = created.first()
                 _activeMeeting.value = mtg
-                if (mtg.livekitToken != null && mtg.livekitUrl != null) {
-                    liveKitManager.connect(url = mtg.livekitUrl, token = mtg.livekitToken, video = true)
+
+                val tokenRes = NetworkClient.api.generateLiveKitToken(
+                    mapOf(
+                        "room_name" to room,
+                        "participant_identity" to myId,
+                        "participant_name" to (_currentUser.value?.username ?: myId)
+                    )
+                )
+                val token = tokenRes.token
+                val url = tokenRes.livekitUrl ?: NetworkClient.LIVEKIT_URL
+                if (token != null) {
+                    liveKitManager.connect(url = url, token = token, video = true)
                 }
                 onSuccess()
             } catch (e: Exception) {
@@ -402,13 +539,28 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
     }
 
     fun joinMeeting(code: String, onSuccess: () -> Unit) {
-        val t = _token.value ?: return
+        val myId = tokenManager.getUserId() ?: return
         viewModelScope.launch {
             try {
-                val mtg = NetworkClient.api.joinMeeting("Bearer $t", code)
+                val results = NetworkClient.api.getMeetingByCode("eq.${code.trim().uppercase()}")
+                val mtg = results.firstOrNull()
+                if (mtg == null) {
+                    _errorMessage.value = "Meeting not found"
+                    return@launch
+                }
                 _activeMeeting.value = mtg
-                if (mtg.livekitToken != null && mtg.livekitUrl != null) {
-                    liveKitManager.connect(url = mtg.livekitUrl, token = mtg.livekitToken, video = true)
+
+                val tokenRes = NetworkClient.api.generateLiveKitToken(
+                    mapOf(
+                        "room_name" to mtg.roomName,
+                        "participant_identity" to myId,
+                        "participant_name" to (_currentUser.value?.username ?: myId)
+                    )
+                )
+                val token = tokenRes.token
+                val url = tokenRes.livekitUrl ?: NetworkClient.LIVEKIT_URL
+                if (token != null) {
+                    liveKitManager.connect(url = url, token = token, video = true)
                 }
                 onSuccess()
             } catch (e: Exception) {
@@ -424,8 +576,9 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
 
     fun logout() {
         liveKitManager.disconnect()
-        webSocketClient.disconnect()
+        realtimeClient.disconnect()
         tokenManager.clear()
+        NetworkClient.currentAuthToken = null
         _token.value = null
         _currentUser.value = null
         _contacts.value = emptyList()
@@ -443,26 +596,13 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
         _errorMessage.value = null
     }
 
-    // --- ViyoWebSocketListener Callbacks ---
+    // --- ViyoRealtimeListener ---
     override fun onPresenceUpdate(userId: String, isOnline: Boolean, lastSeen: String?) {
-        // Update presence in contacts list
-        val currentContacts = _contacts.value
-        _contacts.value = currentContacts.map { c ->
-            if (c.contactUserId == userId) {
-                c.copy(isOnline = isOnline, lastSeen = lastSeen ?: c.lastSeen)
-            } else {
-                c
-            }
+        _contacts.value = _contacts.value.map { c ->
+            if (c.contactUserId == userId) c.copy(isOnline = isOnline, lastSeen = lastSeen ?: c.lastSeen) else c
         }
-
-        // Update presence in search results
-        val currentSearch = _searchResults.value
-        _searchResults.value = currentSearch.map { u ->
-            if (u.id == userId) {
-                u.copy(isOnline = isOnline, lastSeen = lastSeen ?: u.lastSeen)
-            } else {
-                u
-            }
+        _searchResults.value = _searchResults.value.map { u ->
+            if (u.id == userId) u.copy(isOnline = isOnline, lastSeen = lastSeen ?: u.lastSeen) else u
         }
     }
 
@@ -473,25 +613,13 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
                 _messages.value = _messages.value + message
             }
         }
-        // Refresh conversations to update preview
-        val t = _token.value
-        if (t != null) {
-            viewModelScope.launch {
-                try {
-                    val updatedConvs = NetworkClient.api.getConversations("Bearer $t")
-                    _conversations.value = updatedConvs
-                } catch (e: Exception) {
-                    // Ignore
-                }
-            }
-        }
     }
 
-    override fun onContactRequestReceived(requestId: String, senderId: String, senderUsername: String) {
+    override fun onContactRequestReceived(requestId: String, senderId: String) {
         loadPendingRequests()
     }
 
-    override fun onContactRequestAccepted(userId: String, username: String) {
+    override fun onContactRequestAccepted(userId: String) {
         loadContacts()
     }
 
@@ -531,7 +659,7 @@ class ViyoViewModel(application: Application) : AndroidViewModel(application), V
 
     override fun onCleared() {
         super.onCleared()
-        webSocketClient.disconnect()
+        realtimeClient.disconnect()
         liveKitManager.disconnect()
     }
 }

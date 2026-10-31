@@ -1,6 +1,7 @@
 package com.viyo.app.network
 
 import com.viyo.app.model.*
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -8,111 +9,170 @@ import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.*
 import java.util.concurrent.TimeUnit
 
-interface ViyoApi {
-    @POST("api/v1/auth/register")
-    suspend fun register(@Body body: Map<String, String>): TokenResponse
+interface SupabaseApi {
+    // --- SUPABASE AUTH ---
+    @POST("auth/v1/signup")
+    suspend fun signUp(@Body body: Map<String, @JvmSuppressWildcards Any>): SupabaseAuthResponse
 
-    @POST("api/v1/auth/login")
-    suspend fun login(@Body body: Map<String, String>): TokenResponse
+    @POST("auth/v1/token?grant_type=password")
+    suspend fun signIn(@Body body: Map<String, String>): SupabaseAuthResponse
 
-    @GET("api/v1/auth/me")
-    suspend fun getMe(@Header("Authorization") token: String): User
+    @GET("auth/v1/user")
+    suspend fun getUser(): SupabaseAuthUser
 
-    // User Search
-    @GET("api/v1/users/search")
-    suspend fun searchUsers(
-        @Header("Authorization") token: String,
-        @Query("q") query: String
+    // --- PROFILES & SEARCH ---
+    @GET("rest/v1/user_profiles")
+    suspend fun getProfile(
+        @Query("id") idFilter: String,
+        @Query("select") select: String = "*"
+    ): List<UserProfile>
+
+    @GET("rest/v1/user_profiles")
+    suspend fun searchProfiles(
+        @Query("or") orFilter: String,
+        @Query("id") notMeFilter: String? = null,
+        @Query("select") select: String = "*",
+        @Query("limit") limit: Int = 20
     ): List<UserSearchItem>
 
-    // Contacts & Requests
-    @GET("api/v1/contacts")
-    suspend fun getContacts(@Header("Authorization") token: String): List<Contact>
+    @PATCH("rest/v1/user_profiles")
+    suspend fun updateProfile(
+        @Query("id") idFilter: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any>
+    ): List<UserProfile>
 
-    @POST("api/v1/contacts/request")
+    // --- CONTACTS ---
+    @GET("rest/v1/contacts")
+    suspend fun getContacts(
+        @Query("user_id") userFilter: String,
+        @Query("select") select: String = "*"
+    ): List<ContactRow>
+
+    @POST("rest/v1/contacts")
+    suspend fun addContact(
+        @Body body: List<Map<String, String>>
+    )
+
+    @DELETE("rest/v1/contacts")
+    suspend fun removeContact(
+        @Query("user_id") userFilter: String,
+        @Query("contact_user_id") contactUserFilter: String
+    )
+
+    // --- CONTACT REQUESTS ---
+    @GET("rest/v1/contact_requests")
+    suspend fun getPendingRequests(
+        @Query("receiver_id") receiverFilter: String,
+        @Query("status") statusFilter: String = "eq.pending",
+        @Query("select") select: String = "*"
+    ): List<ContactRequestItem>
+
+    @POST("rest/v1/contact_requests")
     suspend fun sendContactRequest(
-        @Header("Authorization") token: String,
         @Body body: Map<String, String>
-    ): Map<String, Any>
+    )
 
-    @GET("api/v1/contacts/requests/pending")
-    suspend fun getPendingRequests(@Header("Authorization") token: String): List<ContactRequestItem>
+    @PATCH("rest/v1/contact_requests")
+    suspend fun updateContactRequest(
+        @Query("id") idFilter: String,
+        @Body body: Map<String, String>
+    )
 
-    @POST("api/v1/contacts/requests/{id}/accept")
-    suspend fun acceptContactRequest(
-        @Header("Authorization") token: String,
-        @Path("id") requestId: String
-    ): Map<String, Any>
+    // --- CONVERSATIONS ---
+    @GET("rest/v1/conversations")
+    suspend fun getConversations(
+        @Query("select") select: String = "*",
+        @Query("order") order: String = "updated_at.desc"
+    ): List<Conversation>
 
-    @POST("api/v1/contacts/requests/{id}/reject")
-    suspend fun rejectContactRequest(
-        @Header("Authorization") token: String,
-        @Path("id") requestId: String
-    ): Map<String, Any>
-
-    // Messaging
-    @GET("api/v1/messaging/conversations")
-    suspend fun getConversations(@Header("Authorization") token: String): List<Conversation>
-
-    @POST("api/v1/messaging/conversations")
+    @POST("rest/v1/conversations")
     suspend fun createConversation(
-        @Header("Authorization") token: String,
-        @Body body: Map<String, Any>
-    ): Conversation
+        @Body body: Map<String, @JvmSuppressWildcards Any>
+    ): List<Conversation>
 
-    @GET("api/v1/messaging/conversations/{id}/messages")
+    @POST("rest/v1/conversation_members")
+    suspend fun addConversationMembers(
+        @Body body: List<Map<String, String>>
+    )
+
+    @GET("rest/v1/conversation_members")
+    suspend fun getConversationMembers(
+        @Query("user_id") userFilter: String,
+        @Query("select") select: String = "*"
+    ): List<ConversationMemberRow>
+
+    // --- MESSAGING ---
+    @GET("rest/v1/messages")
     suspend fun getMessages(
-        @Header("Authorization") token: String,
-        @Path("id") conversationId: String
+        @Query("conversation_id") convFilter: String,
+        @Query("order") order: String = "created_at.asc",
+        @Query("select") select: String = "*",
+        @Query("limit") limit: Int = 50
     ): List<Message>
 
-    @POST("api/v1/messaging/conversations/{id}/messages")
+    @POST("rest/v1/messages")
     suspend fun sendMessage(
-        @Header("Authorization") token: String,
-        @Path("id") conversationId: String,
         @Body body: Map<String, String>
-    ): Message
+    ): List<Message>
 
-    // Calling
-    @POST("api/v1/calls/initiate")
-    suspend fun initiateCall(
-        @Header("Authorization") token: String,
+    // --- CALLS ---
+    @POST("rest/v1/calls")
+    suspend fun createCallRecord(
         @Body body: Map<String, String>
-    ): CallRecord
+    ): List<CallRecord>
 
-    @POST("api/v1/calls/{id}/action")
-    suspend fun callAction(
-        @Header("Authorization") token: String,
-        @Path("id") callId: String,
+    @PATCH("rest/v1/calls")
+    suspend fun updateCallRecord(
+        @Query("id") idFilter: String,
         @Body body: Map<String, String>
-    ): CallRecord
+    ): List<CallRecord>
 
-    @GET("api/v1/calls/history")
-    suspend fun getCallHistory(@Header("Authorization") token: String): List<CallRecord>
-
-    // Meetings
-    @POST("api/v1/meetings")
+    // --- MEETINGS ---
+    @POST("rest/v1/meetings")
     suspend fun createMeeting(
-        @Header("Authorization") token: String,
-        @Body body: Map<String, Any>
-    ): Meeting
+        @Body body: Map<String, String>
+    ): List<Meeting>
 
-    @GET("api/v1/meetings/{code}")
-    suspend fun joinMeeting(
-        @Header("Authorization") token: String,
-        @Path("code") meetingCode: String
-    ): Meeting
+    @GET("rest/v1/meetings")
+    suspend fun getMeetingByCode(
+        @Query("meeting_code") codeFilter: String,
+        @Query("select") select: String = "*"
+    ): List<Meeting>
+
+    // --- EDGE FUNCTIONS: LIVEKIT TOKEN ---
+    @POST("functions/v1/generate-livekit-token")
+    suspend fun generateLiveKitToken(
+        @Body body: Map<String, String>
+    ): LiveKitTokenResponse
 }
 
 object NetworkClient {
-    // Default to production deployed Render backend
-    const val DEFAULT_BASE_URL = "https://viyo-backend.onrender.com/"
+    const val SUPABASE_URL = "https://bmzxwyzitfhczjbkjysp.supabase.co/"
+    const val SUPABASE_KEY = "sb_publishable_JjKmLKGcwt_ooCrbJCYdTQ_cQbl-lQz"
+    const val LIVEKIT_URL = "wss://viyo-vz4rl9o4.livekit.cloud"
 
-    var baseUrl: String = DEFAULT_BASE_URL
-        private set
+    var currentAuthToken: String? = null
+
+    private val authInterceptor = Interceptor { chain ->
+        val original = chain.request()
+        val requestBuilder = original.newBuilder()
+            .header("apikey", SUPABASE_KEY)
+            .header("Content-Type", "application/json")
+            .header("Prefer", "return=representation")
+
+        val token = currentAuthToken
+        if (!token.isNullOrBlank()) {
+            requestBuilder.header("Authorization", "Bearer $token")
+        } else {
+            requestBuilder.header("Authorization", "Bearer $SUPABASE_KEY")
+        }
+
+        chain.proceed(requestBuilder.build())
+    }
 
     val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .addInterceptor(authInterceptor)
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(20, TimeUnit.SECONDS)
@@ -122,35 +182,16 @@ object NetworkClient {
             .build()
     }
 
-    var api: ViyoApi = createApi(baseUrl)
-        private set
-
-    fun initialize(customUrl: String? = null) {
-        val targetUrl = if (!customUrl.isNullOrBlank()) {
-            if (customUrl.endsWith("/")) customUrl else "$customUrl/"
-        } else {
-            DEFAULT_BASE_URL
-        }
-        baseUrl = targetUrl
-        api = createApi(baseUrl)
-    }
-
-    private fun createApi(url: String): ViyoApi {
-        return Retrofit.Builder()
-            .baseUrl(url)
+    val api: SupabaseApi by lazy {
+        Retrofit.Builder()
+            .baseUrl(SUPABASE_URL)
             .client(okHttpClient)
             .addConverterFactory(MoshiConverterFactory.create())
             .build()
-            .create(ViyoApi::class.java)
+            .create(SupabaseApi::class.java)
     }
 
-    fun getWebSocketUrl(token: String): String {
-        val baseWs = if (baseUrl.startsWith("https://")) {
-            baseUrl.replace("https://", "wss://")
-        } else {
-            baseUrl.replace("http://", "ws://")
-        }
-        val cleanWs = if (baseWs.endsWith("/")) baseWs.dropLast(1) else baseWs
-        return "$cleanWs/api/v1/ws?token=$token"
+    fun getRealtimeWebSocketUrl(): String {
+        return "wss://bmzxwyzitfhczjbkjysp.supabase.co/realtime/v1/websocket?apikey=$SUPABASE_KEY&vsn=1.0.0"
     }
 }
