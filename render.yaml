@@ -1,7 +1,5 @@
 services:
-  # ==============================================================================
-  # VIYO FastAPI Backend Service
-  # ==============================================================================
+  # VIYO FastAPI Backend
   - type: web
     name: viyo-backend
     runtime: python
@@ -19,25 +17,22 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
-        sync: false # Set in Render dashboard to: postgresql+asyncpg://postgres:<YOUR_DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres
+        sync: false
       - key: LIVEKIT_URL
         value: wss://viyo-vz4rl9o4.livekit.cloud
       - key: LIVEKIT_API_KEY
-        sync: false # Set in Render dashboard from secure secrets
+        sync: false
       - key: LIVEKIT_API_SECRET
-        sync: false # Set in Render dashboard from secure secrets
+        sync: false
       - key: FIREBASE_PROJECT_ID
         value: viyo-c3b64
       - key: VAPID_PUBLIC_KEY
-        sync: false # Set in Render dashboard from VAPID key
+        sync: false
 
-  # ==============================================================================
-  # VIYO React Web Client (Static Site / PWA)
-  # ==============================================================================
+  # VIYO React Web Client
   - type: web
     name: viyo-web
     runtime: static
-    region: oregon
     plan: free
     rootDir: web
     buildCommand: "npm install && npm run build"
@@ -50,9 +45,8 @@ services:
       - key: VITE_LIVEKIT_URL
         value: wss://viyo-vz4rl9o4.livekit.cloud
       - key: VITE_VAPID_PUBLIC_KEY
-        sync: false # Set in Render dashboard from your Firebase Web Push VAPID key
+        sync: false
       - key: VITE_API_URL
-        sync: false # Set to https://viyo-backend.onrender.com/api/v1
+        sync: false
       - key: VITE_WS_URL
-        sync: false # Set to wss://viyo-backend.onrender.com/api/v1/ws
-
+        sync: false
