@@ -33,7 +33,6 @@ services:
   - type: web
     name: viyo-web
     runtime: static
-    plan: free
     rootDir: web
     buildCommand: "npm install && npm run build"
     staticPublishPath: ./dist
