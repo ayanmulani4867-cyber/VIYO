@@ -66,3 +66,4 @@ This guide walks you through connecting external cloud providers (LiveKit, Supab
    - **`viyo-backend`**: Builds with Python 3.13, runs `alembic upgrade head`, and serves FastAPI with health monitoring at `/api/v1/health`.
    - **`viyo-web`**: Builds with React 19/Vite and deploys as a static SPA.
 4. Set your production environment secrets (`DATABASE_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `VAPID_PUBLIC_KEY`).
+
