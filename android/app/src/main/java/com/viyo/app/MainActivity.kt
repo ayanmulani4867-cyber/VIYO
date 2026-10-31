@@ -72,7 +72,16 @@ class MainActivity : ComponentActivity() {
                             HomeScreen(
                                 viewModel = viewModel,
                                 onNavigateToCall = { navController.navigate("calling") },
-                                onNavigateToMeetings = { navController.navigate("meetings") }
+                                onNavigateToMeetings = { navController.navigate("meetings") },
+                                onNavigateToChat = { navController.navigate("chat") }
+                            )
+                        }
+
+                        composable("chat") {
+                            ChatScreen(
+                                viewModel = viewModel,
+                                onNavigateBack = { navController.popBackStack() },
+                                onNavigateToCall = { navController.navigate("calling") }
                             )
                         }
 
@@ -98,4 +107,3 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-

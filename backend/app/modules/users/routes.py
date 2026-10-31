@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.models import User, UserProfile, UserSettings, BlockedUser, Contact
 from app.schemas import UserSearchOut, UserProfileUpdate, UserSettingsUpdate, UserSettingsOut, UserProfileOut
+from app.integrations.websocket_manager import manager
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -59,7 +60,7 @@ async def search_users(
                 username=u.username,
                 display_name=p.display_name if p else u.username,
                 avatar_url=p.avatar_url if p else None,
-                is_online=p.is_online if p else False,
+                is_online=manager.is_user_online(str(u.id)) or (p.is_online if p else False),
                 last_seen=last_seen
             )
         )
@@ -102,7 +103,7 @@ async def get_user_profile(
         username=user.username,
         display_name=p.display_name if p else user.username,
         avatar_url=p.avatar_url if p else None,
-        is_online=p.is_online if p else False,
+        is_online=manager.is_user_online(str(user.id)) or (p.is_online if p else False),
         last_seen=last_seen
     )
 

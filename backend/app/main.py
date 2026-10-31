@@ -115,15 +115,17 @@ async def websocket_endpoint(
     user_id = payload["sub"]
     await manager.connect(user_id, websocket)
 
-    # Set user online in database
+    now = datetime.now(timezone.utc)
+    # Set user online in database and broadcast presence to contacts
     async with AsyncSessionLocal() as session:
         from sqlalchemy.future import select
-        res = await session.execute(select(UserProfile).where(UserProfile.user_id == user_id))
+        res = await session.execute(select(UserProfile).where(UserProfile.user_id == uuid.UUID(user_id)))
         p = res.scalars().first()
         if p:
             p.is_online = True
-            p.last_seen = datetime.now(timezone.utc)
+            p.last_seen = now
             await session.commit()
+        await manager.broadcast_presence_to_contacts(user_id, True, now, session)
 
     try:
         while True:
@@ -131,6 +133,7 @@ async def websocket_endpoint(
             try:
                 msg_data = json.loads(data)
                 action = msg_data.get("action")
+                manager.record_heartbeat(user_id)
                 
                 # Handle typing indicator
                 if action == "typing":
@@ -155,12 +158,15 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         manager.disconnect(user_id, websocket)
         if not manager.is_user_online(user_id):
+            now = datetime.now(timezone.utc)
             async with AsyncSessionLocal() as session:
                 from sqlalchemy.future import select
-                res = await session.execute(select(UserProfile).where(UserProfile.user_id == user_id))
+                res = await session.execute(select(UserProfile).where(UserProfile.user_id == uuid.UUID(user_id)))
                 p = res.scalars().first()
                 if p:
                     p.is_online = False
-                    p.last_seen = datetime.now(timezone.utc)
+                    p.last_seen = now
                     await session.commit()
+                await manager.broadcast_presence_to_contacts(user_id, False, now, session)
+
 

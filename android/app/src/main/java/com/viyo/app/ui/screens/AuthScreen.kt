@@ -3,6 +3,8 @@ package com.viyo.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -12,6 +14,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.viyo.app.network.NetworkClient
 import com.viyo.app.theme.*
 import com.viyo.app.viewmodel.ViyoViewModel
 
@@ -26,8 +29,51 @@ fun AuthScreen(
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
+    var showServerDialog by remember { mutableStateOf(false) }
+    var serverUrlInput by remember { mutableStateOf(NetworkClient.baseUrl) }
 
     val errorMessage by viewModel.errorMessage.collectAsState()
+
+    if (showServerDialog) {
+        AlertDialog(
+            onDismissRequest = { showServerDialog = false },
+            containerColor = ViyoDarkSurface,
+            title = { Text("Server Configuration", color = Color.White) },
+            text = {
+                Column {
+                    Text(
+                        "Default: https://viyo-backend.onrender.com/",
+                        color = Color.Gray,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = serverUrlInput,
+                        onValueChange = { serverUrlInput = it },
+                        label = { Text("Backend URL") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        NetworkClient.initialize(serverUrlInput)
+                        showServerDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ViyoViolet)
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showServerDialog = false }) {
+                    Text("Cancel", color = Color.Gray)
+                }
+            }
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -36,6 +82,16 @@ fun AuthScreen(
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
+        // Server config button at top end
+        IconButton(
+            onClick = { showServerDialog = true },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 16.dp)
+        ) {
+            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.Gray)
+        }
+
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
@@ -188,4 +244,3 @@ fun AuthScreen(
         }
     }
 }
-

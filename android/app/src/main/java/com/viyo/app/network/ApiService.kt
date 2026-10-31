@@ -18,6 +18,14 @@ interface ViyoApi {
     @GET("api/v1/auth/me")
     suspend fun getMe(@Header("Authorization") token: String): User
 
+    // User Search
+    @GET("api/v1/users/search")
+    suspend fun searchUsers(
+        @Header("Authorization") token: String,
+        @Query("q") query: String
+    ): List<UserSearchItem>
+
+    // Contacts & Requests
     @GET("api/v1/contacts")
     suspend fun getContacts(@Header("Authorization") token: String): List<Contact>
 
@@ -27,8 +35,30 @@ interface ViyoApi {
         @Body body: Map<String, String>
     ): Map<String, Any>
 
+    @GET("api/v1/contacts/requests/pending")
+    suspend fun getPendingRequests(@Header("Authorization") token: String): List<ContactRequestItem>
+
+    @POST("api/v1/contacts/requests/{id}/accept")
+    suspend fun acceptContactRequest(
+        @Header("Authorization") token: String,
+        @Path("id") requestId: String
+    ): Map<String, Any>
+
+    @POST("api/v1/contacts/requests/{id}/reject")
+    suspend fun rejectContactRequest(
+        @Header("Authorization") token: String,
+        @Path("id") requestId: String
+    ): Map<String, Any>
+
+    // Messaging
     @GET("api/v1/messaging/conversations")
     suspend fun getConversations(@Header("Authorization") token: String): List<Conversation>
+
+    @POST("api/v1/messaging/conversations")
+    suspend fun createConversation(
+        @Header("Authorization") token: String,
+        @Body body: Map<String, Any>
+    ): Conversation
 
     @GET("api/v1/messaging/conversations/{id}/messages")
     suspend fun getMessages(
@@ -43,6 +73,7 @@ interface ViyoApi {
         @Body body: Map<String, String>
     ): Message
 
+    // Calling
     @POST("api/v1/calls/initiate")
     suspend fun initiateCall(
         @Header("Authorization") token: String,
@@ -59,6 +90,7 @@ interface ViyoApi {
     @GET("api/v1/calls/history")
     suspend fun getCallHistory(@Header("Authorization") token: String): List<CallRecord>
 
+    // Meetings
     @POST("api/v1/meetings")
     suspend fun createMeeting(
         @Header("Authorization") token: String,
@@ -73,22 +105,52 @@ interface ViyoApi {
 }
 
 object NetworkClient {
-    // 10.0.2.2 routes to host machine from Android Emulator; 127.0.0.1 for local testing
-    private const val BASE_URL = "http://10.0.2.2:8000/"
+    // Default to production deployed Render backend
+    const val DEFAULT_BASE_URL = "https://viyo-backend.onrender.com/"
 
-    private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .addInterceptor(HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
-        })
-        .build()
+    var baseUrl: String = DEFAULT_BASE_URL
+        private set
 
-    val api: ViyoApi = Retrofit.Builder()
-        .baseUrl(BASE_URL)
-        .client(okHttpClient)
-        .addConverterFactory(MoshiConverterFactory.create())
-        .build()
-        .create(ViyoApi::class.java)
+    val okHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .addInterceptor(HttpLoggingInterceptor().apply {
+                level = HttpLoggingInterceptor.Level.BODY
+            })
+            .build()
+    }
+
+    var api: ViyoApi = createApi(baseUrl)
+        private set
+
+    fun initialize(customUrl: String? = null) {
+        val targetUrl = if (!customUrl.isNullOrBlank()) {
+            if (customUrl.endsWith("/")) customUrl else "$customUrl/"
+        } else {
+            DEFAULT_BASE_URL
+        }
+        baseUrl = targetUrl
+        api = createApi(baseUrl)
+    }
+
+    private fun createApi(url: String): ViyoApi {
+        return Retrofit.Builder()
+            .baseUrl(url)
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create())
+            .build()
+            .create(ViyoApi::class.java)
+    }
+
+    fun getWebSocketUrl(token: String): String {
+        val baseWs = if (baseUrl.startsWith("https://")) {
+            baseUrl.replace("https://", "wss://")
+        } else {
+            baseUrl.replace("http://", "ws://")
+        }
+        val cleanWs = if (baseWs.endsWith("/")) baseWs.dropLast(1) else baseWs
+        return "$cleanWs/api/v1/ws?token=$token"
+    }
 }
-

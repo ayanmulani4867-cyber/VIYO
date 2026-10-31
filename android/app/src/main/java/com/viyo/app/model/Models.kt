@@ -32,6 +32,16 @@ data class User(
 )
 
 @JsonClass(generateAdapter = true)
+data class UserSearchItem(
+    val id: String,
+    val username: String,
+    @Json(name = "display_name") val displayName: String,
+    @Json(name = "avatar_url") val avatarUrl: String? = null,
+    @Json(name = "is_online") val isOnline: Boolean = false,
+    @Json(name = "last_seen") val lastSeen: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class Contact(
     val id: String,
     @Json(name = "contact_user_id") val contactUserId: String,
@@ -40,6 +50,18 @@ data class Contact(
     @Json(name = "avatar_url") val avatarUrl: String? = null,
     @Json(name = "is_online") val isOnline: Boolean = false,
     @Json(name = "last_seen") val lastSeen: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class ContactRequestItem(
+    val id: String,
+    @Json(name = "sender_id") val senderId: String,
+    @Json(name = "receiver_id") val receiverId: String,
+    val status: String,
+    @Json(name = "created_at") val createdAt: String,
+    @Json(name = "sender_username") val senderUsername: String? = null,
+    @Json(name = "sender_display_name") val senderDisplayName: String? = null,
+    @Json(name = "sender_avatar_url") val senderAvatarUrl: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -81,6 +103,17 @@ data class CallRecord(
 )
 
 @JsonClass(generateAdapter = true)
+data class IncomingCallData(
+    val callId: String,
+    val roomName: String,
+    val callType: String,
+    val callerId: String,
+    val callerUsername: String,
+    val callerDisplayName: String,
+    val callerAvatarUrl: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class Meeting(
     val id: String,
     @Json(name = "meeting_code") val meetingCode: String,
@@ -90,4 +123,3 @@ data class Meeting(
     @Json(name = "livekit_token") val livekitToken: String? = null,
     @Json(name = "livekit_url") val livekitUrl: String? = null
 )
-
