@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "519635569171",
+    "project_id": "viyo-c3b64",
+    "storage_bucket": "viyo-c3b64.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:519635569171:android:a32370612d6b8333c34de6",
+        "android_client_info": {
+          "package_name": "com.viyo.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDGrSFVn5r-Qu6QeArryw0Fs9z0VnFK-EY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

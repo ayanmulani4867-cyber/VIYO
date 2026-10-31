@@ -1,0 +1,58 @@
+services:
+  # ==============================================================================
+  # VIYO FastAPI Backend Service
+  # ==============================================================================
+  - type: web
+    name: viyo-backend
+    runtime: python
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt && alembic upgrade head"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false # Set in Render dashboard to: postgresql+asyncpg://postgres:<YOUR_DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres
+      - key: LIVEKIT_URL
+        value: wss://viyo-vz4rl9o4.livekit.cloud
+      - key: LIVEKIT_API_KEY
+        sync: false # Set in Render dashboard from secure secrets
+      - key: LIVEKIT_API_SECRET
+        sync: false # Set in Render dashboard from secure secrets
+      - key: FIREBASE_PROJECT_ID
+        value: viyo-c3b64
+      - key: VAPID_PUBLIC_KEY
+        sync: false # Set in Render dashboard from VAPID key
+
+  # ==============================================================================
+  # VIYO React Web Client (Static Site / PWA)
+  # ==============================================================================
+  - type: web
+    name: viyo-web
+    runtime: static
+    region: oregon
+    plan: free
+    rootDir: web
+    buildCommand: "npm install && npm run build"
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_LIVEKIT_URL
+        value: wss://viyo-vz4rl9o4.livekit.cloud
+      - key: VITE_VAPID_PUBLIC_KEY
+        sync: false # Set in Render dashboard from your Firebase Web Push VAPID key
+      - key: VITE_API_URL
+        sync: false # Set to https://viyo-backend.onrender.com/api/v1
+      - key: VITE_WS_URL
+        sync: false # Set to wss://viyo-backend.onrender.com/api/v1/ws
+

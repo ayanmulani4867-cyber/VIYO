@@ -1,0 +1,16 @@
+{
+  "name": "VIYO — See. Talk. Connect.",
+  "short_name": "VIYO",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B0F19",
+  "theme_color": "#7c3aed",
+  "icons": [
+    {
+      "src": "/viyo-logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
+

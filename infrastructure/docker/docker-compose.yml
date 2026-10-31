@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Persistence
+  viyo-db:
+    image: postgres:16-alpine
+    container_name: viyo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-viyo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-viyosecretpass}
+      POSTGRES_DB: ${POSTGRES_DB:-viyodb}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U viyo -d viyodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for Presence & WebSocket PubSub
+  viyo-redis:
+    image: redis:7-alpine
+    container_name: viyo-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # LiveKit Community Edition (SFU WebRTC Server)
+  viyo-livekit:
+    image: livekit/livekit-server:v1.7.2
+    container_name: viyo-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-50100:50000-50100/udp"
+    volumes:
+      - ../livekit/livekit.yaml:/etc/livekit.yaml
+
+  # VIYO FastAPI Backend
+  viyo-backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: viyo-backend
+    restart: unless-stopped
+    depends_on:
+      viyo-db:
+        condition: service_healthy
+      viyo-redis:
+        condition: service_started
+      viyo-livekit:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-viyo}:${POSTGRES_PASSWORD:-viyosecretpass}@viyo-db:5432/${POSTGRES_DB:-viyodb}
+      REDIS_URL: redis://viyo-redis:6379/0
+      LIVEKIT_URL: ws://viyo-livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+      SECRET_KEY: ${SECRET_KEY:-viyo-super-secret-key-production-ready}
+    ports:
+      - "8000:8000"
+    volumes:
+      - viyo_uploads:/app/uploads
+
+  # VIYO React Web PWA Frontend
+  viyo-web:
+    build:
+      context: ../../web
+      dockerfile: Dockerfile
+    container_name: viyo-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - viyo-backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  viyo_uploads:
+
